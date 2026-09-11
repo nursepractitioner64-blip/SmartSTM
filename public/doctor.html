@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<title>Doctor Station</title>
+
+<script src="/socket.io/socket.io.js"></script>
+
+<link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/00-base.css">
+<link rel="stylesheet" href="/css/01-layout.css">
+<link rel="stylesheet" href="/css/02-ui.css">
+<!-- แล้วค่อย page -->
+<link rel="stylesheet" href="/css/doctor.css">
+<!-- Bootstrap (ใช้ modal) -->
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+</head>
+
+<body>
+
+<div class="app-container">
+
+<div class="sidebar">
+  <!-- ================= SIDEBAR ================= -->
+   <!-- LOGO -->
+    <div class="sidebar-logo">
+    <img src="/image/logoMMT.png" alt="Mithmitree Logo">
+    <h3>DOCTOR STATION</h3>
+    <small>Smart Queue System</small>
+    </div>
+
+    <a href="analytics.html">Dashboard</a>
+    <a class="active" href="doctor.html">Doctor</a>
+    <a href="nurse.html">Screening</a>
+    <a href="treatment.html">Treatment</a>
+    <a href="pharmacy.html">Pharmacy</a>
+</div>
+
+  <!-- ================= MAIN ================= -->
+  <div class="main">
+
+    <div class="card">
+
+      <div class="card-header">
+        📋 ห้องตรวจและวินิจฉัยโรค
+      </div>
+
+      <table class="table">
+
+        <thead>
+            <tr>
+            <th style="width: 80px;">ลำดับที่</th>
+            <th style="width: 80px;">คิว</th>
+            <th style="width: 180px;">ชื่อผู้รับบริการ</th>
+            <th style="width: 80px;">สถานะ</th>
+            <th style="width: 180px;">การจัดการ</th>
+            </tr>
+        </thead>
+
+        <tbody id="list"></tbody>
+
+      </table>
+
+    </div>
+
+  </div>
+</div>
+
+<!-- ================= MODAL (Treatment) ================= -->
+<div class="modal fade" id="treatmentModal">
+
+  <div class="modal-dialog modal-dialog-centered">
+
+    <div class="modal-content">
+
+      <div class="modal-header">
+        <h5 class="modal-title">🧾 Doctor Note / Treatment Order</h5>
+        <button class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+
+      <div class="modal-body">
+
+        <label>Doctor Note</label>
+        <textarea
+          id="doctorNote"
+          class="input"
+          rows="4"
+          placeholder="เช่น CBC, X-Ray, EKG, Diagnosis...">
+        </textarea>
+
+      </div>
+
+      <div class="modal-footer">
+
+        <button class="btn btn-danger" data-bs-dismiss="modal">
+          ยกเลิก
+        </button>
+
+        <button class="btn btn-primary" onclick="confirmTreatment()">
+          ส่งห้องหัตถการ
+        </button>
+
+      </div>
+
+    </div>
+
+  </div>
+
+</div>
+
+<script>
+
+const socket = io();
+const room = new URLSearchParams(location.search).get("room") || "1";
+
+socket.emit("joinRoom", room);
+socket.emit("getQueue", room);
+
+socket.on("updateQueue", data => {
+    render(data);
+    
+});
+
+let selectedQueue = null;
+
+/* =========================
+   RENDER TABLE
+========================= */
+
+function render(data){
+
+    let html = "";
+
+    data.forEach((p,i)=>{
+
+        let badgeClass = "badge-observe";
+        let statusText = "รอเรียกคิว";
+
+        if(p.status === "called"){
+            badgeClass = "badge-stable";
+            statusText = "เรียกแล้ว";
+        }
+
+        html += `
+        <tr>
+
+            <td>${i+1}</td>
+
+            <td><strong>${p.queueNo}</strong></td>
+
+            <td>
+                ${p.name}
+
+                ${
+                  p.note
+                  ? `<div class="mt-1">
+                        <small style="color:#c62828;">
+                          📝 ${p.note}
+                        </small>
+                     </div>`
+                  : ""
+                }
+            </td>
+
+            <td>
+                <span class="badge ${badgeClass}">
+                    ${statusText}
+                </span>
+            </td>
+
+            <td class="flex gap-10">
+
+                <button class="btn btn-primary btn-sm"
+                    onclick="call('${p.queueNo}')">
+                    เรียกคิว
+                </button>
+
+                <button class="btn btn-warning btn-sm"
+                    onclick="openTreatment('${p.queueNo}')">
+                    ส่งห้องหัตถการ
+                </button>
+
+                <button class="btn btn-success btn-sm"
+                    onclick="sendPharmacy('${p.queueNo}')">
+                    ส่งห้องจ่ายยา
+                </button>
+
+            </td>
+
+        </tr>`;
+    });
+
+    document.getElementById("list").innerHTML = html;
+}
+
+/* =========================
+   ACTIONS
+========================= */
+
+function call(queueNo){
+    socket.emit("callByQueue", {
+        room,
+        queueNo
+    });
+}
+
+/* =========================
+   OPEN MODAL
+========================= */
+
+function openTreatment(queueNo){
+
+    selectedQueue = queueNo;
+
+    document.getElementById("doctorNote").value = "";
+
+    const modal =
+      new bootstrap.Modal(
+        document.getElementById("treatmentModal")
+      );
+
+    modal.show();
+}
+
+/* =========================
+   SEND TO TREATMENT
+========================= */
+
+function confirmTreatment(){
+
+    const note =
+      document.getElementById("doctorNote").value;
+
+    socket.emit("movePatient", {
+        queueNo: selectedQueue,
+        from: "1",
+        to: "3",
+        note
+    });
+
+    bootstrap.Modal.getInstance(
+      document.getElementById("treatmentModal")
+    ).hide();
+}
+
+/* =========================
+   SEND TO PHARMACY
+========================= */
+
+function sendPharmacy(queueNo){
+
+    socket.emit("movePatient", {
+        queueNo,
+        from: "1",
+        to: "2",
+        note: ""
+    });
+}
+
+</script>
+
+</body>
+</html>

@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+>
+<title>Display Queue</title>
+
+<script src="/socket.io/socket.io.js"></script>
+
+<link
+    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+    rel="stylesheet"
+>
+<script
+    src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+></script>
+
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;600;700&display=swap');
+
+body{
+    font-family:'Kanit',sans-serif;
+    background:linear-gradient(135deg,#eef7f8,#f8fbff);
+}
+
+/* NAVBAR */
+.navbar{
+    background:linear-gradient(135deg,#009688,#00bfa6);
+    box-shadow:0 4px 20px rgba(0,0,0,.15);
+}
+
+/* CARD */
+.card-ui{
+    background:white;
+    border-radius:16px;
+    box-shadow:0 8px 30px rgba(0,0,0,.08);
+    padding:20px;
+}
+
+/* CENTER DISPLAY BOX */
+.center-box{
+    text-align:center;
+    padding:40px 10px;
+}
+
+/* QUEUE NUMBER */
+.queue{
+    font-size:140px;
+    font-weight:700;
+    color:#00bfa6;
+}
+
+/* NAME */
+.name{
+    font-size:50px;
+    font-weight:600;
+    margin-top:10px;
+}
+
+/* ROOM */
+.room{
+    font-size:35px;
+    color:#6c757d;
+    margin-top:10px;
+}
+
+/* ANIMATION */
+.fade-in{
+    animation:fade .4s ease;
+}
+
+@keyframes fade{
+    from{
+        opacity:0;
+        transform:translateY(10px);
+    }
+    to{
+        opacity:1;
+        transform:translateY(0);
+    }
+}
+
+/* BUTTON */
+.btn-unlock{
+    background:#00bfa6;
+    border:none;
+    padding:10px 18px;
+    border-radius:10px;
+    color:white;
+    font-weight:600;
+    transition:.2s;
+}
+
+.btn-unlock:hover{
+    transform:scale(1.05);
+    background:#009688;
+}
+
+/* AUDIO STATUS */
+.audio-status{
+    margin-top:8px;
+    font-size:14px;
+    color:#6c757d;
+}
+
+.audio-status.ready{
+    color:#00897b;
+}
+
+.audio-status.error{
+    color:#c62828;
+}
+</style>
+</head>
+
+<body>
+
+<!-- NAV -->
+<nav class="navbar navbar-dark px-4">
+    <div class="d-flex align-items-center">
+        <img
+            src="/image/logoMMT.png"
+            width="70"
+            class="me-3"
+            alt="Logo"
+        >
+        <div>
+            <div style="font-size:22px;font-weight:600;">
+                ระบบเรียกคิวเข้าพบแพทย์
+            </div>
+            <small>Smart Queue System</small>
+        </div>
+    </div>
+</nav>
+
+<!-- AUDIO UNLOCK -->
+<div class="text-center mt-3">
+    <button
+        id="unlockButton"
+        class="btn-unlock"
+        onclick="unlockAudio()"
+    >
+        🔊 เปิดเสียง
+    </button>
+
+<div id="audioStatus" class="audio-status">
+    กรุณากด "เปิดเสียง" ก่อนใช้งาน
+</div>
+
+</div>
+
+<!-- CARD -->
+<div class="container mt-4">
+    <div class="card-ui">
+
+        <div class="center-box">
+
+            <div id="q" class="name">-</div>
+            <div id="n" class="queue">-</div>
+            <div id="r" class="room">-</div>
+
+        </div>
+
+    </div>
+</div>
+
+<script>
+/*
+ * ============================================================
+ * AUDIO ENGINE FOR WINDOWS -> TV / MIRACAST
+ * ============================================================
+ *
+ * Old version:
+ *   audio.src = mp3
+ *   audio.play()
+ *
+ * This can start playback while the MP3 is still buffering.
+ * With Miracast this is especially likely to produce:
+ *   - sound stutter at the beginning
+ *   - delay
+ *   - missing first words
+ *
+ * New version:
+ *   1. Fetch the COMPLETE MP3
+ *   2. Decode it into an AudioBuffer
+ *   3. Put decoded audio into a client queue
+ *   4. Play only after decoding is complete
+ *   5. Never play two announcements at the same time
+ *
+ * The AudioContext is unlocked by the user's button click.
+ */
+
+const socket = io({
+    transports: ["websocket", "polling"],
+    reconnection: true,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 1000,
+    reconnectionDelayMax: 5000
+});
+
+const qEl = document.getElementById("q");
+const nEl = document.getElementById("n");
+const rEl = document.getElementById("r");
+const unlockButton = document.getElementById("unlockButton");
+const audioStatus = document.getElementById("audioStatus");
+
+let audioContext = null;
+let audioReady = false;
+let isPlaying = false;
+
+const audioQueue = [];
+const decodedCache = new Map();
+const loadingAudio = new Map();
+
+const MAX_CACHE_ITEMS = 20;
+
+/* ============================================================
+   UI
+============================================================ */
+function setAudioStatus(text, type = "") {
+    audioStatus.textContent = text;
+    audioStatus.className = "audio-status " + type;
+}
+
+/* ============================================================
+   CREATE AUDIO CONTEXT
+============================================================ */
+function createAudioContext() {
+    if (audioContext) return audioContext;
+
+    const AudioContextClass =
+        window.AudioContext ||
+        window.webkitAudioContext;
+
+    if (!AudioContextClass) {
+        throw new Error(
+            "Browser นี้ไม่รองรับ Web Audio API"
+        );
+    }
+
+    audioContext = new AudioContextClass();
+
+    return audioContext;
+}
+
+/* ============================================================
+   UNLOCK AUDIO
+   Must be triggered by a real user click.
+============================================================ */
+async function unlockAudio() {
+    try {
+        const ctx = createAudioContext();
+
+        if (ctx.state === "suspended") {
+            await ctx.resume();
+        }
+
+        /*
+         * Tiny silent buffer.
+         * This helps Chrome establish the audio output path
+         * immediately after the user gesture.
+         */
+        const buffer = ctx.createBuffer(
+            1,
+            Math.max(1, Math.floor(ctx.sampleRate * 0.02)),
+            ctx.sampleRate
+        );
+
+        const source = ctx.createBufferSource();
+        const gain = ctx.createGain();
+
+        gain.gain.value = 0;
+
+        source.buffer = buffer;
+        source.connect(gain);
+        gain.connect(ctx.destination);
+
+        source.start(0);
+
+        audioReady = true;
+
+        unlockButton.textContent = "🔊 เสียงพร้อมใช้งาน";
+        unlockButton.disabled = true;
+
+        setAudioStatus(
+            "เสียงพร้อมใช้งาน — รอประกาศคิว",
+            "ready"
+        );
+
+        processAudioQueue();
+
+    } catch (error) {
+        console.error("Audio unlock error:", error);
+
+        audioReady = false;
+
+        setAudioStatus(
+            "เปิดเสียงไม่สำเร็จ กรุณากดปุ่มอีกครั้ง",
+            "error"
+        );
+    }
+}
+
+/* ============================================================
+   DISPLAY QUEUE
+============================================================ */
+function displayPatient(data) {
+    qEl.innerText = data.queueNo || "-";
+    nEl.innerText = data.name || "-";
+    rEl.innerText =
+        data.roomName ||
+        ("ห้อง " + (data.room || "-"));
+
+    qEl.classList.remove("fade-in");
+    void qEl.offsetWidth;
+    qEl.classList.add("fade-in");
+}
+
+/* ============================================================
+   FETCH + DECODE COMPLETE AUDIO
+============================================================ */
+async function loadAndDecodeAudio(url) {
+
+    if (decodedCache.has(url)) {
+        return decodedCache.get(url);
+    }
+
+    if (loadingAudio.has(url)) {
+        return loadingAudio.get(url);
+    }
+
+    const loadingPromise = (async () => {
+
+        const response = await fetch(
+            url,
+            {
+                method: "GET",
+                cache: "force-cache"
+            }
+        );
+
+        if (!response.ok) {
+            throw new Error(
+                `โหลดเสียงไม่สำเร็จ: HTTP ${response.status}`
+            );
+        }
+
+        /*
+         * IMPORTANT:
+         * arrayBuffer() waits until the complete MP3
+         * has been downloaded before decoding.
+         */
+        const arrayBuffer = await response.arrayBuffer();
+
+        if (!arrayBuffer.byteLength) {
+            throw new Error("ไฟล์เสียงว่าง");
+        }
+
+        const ctx = createAudioContext();
+
+        /*
+         * decodeAudioData makes a PCM AudioBuffer.
+         * After this point, playback no longer depends on
+         * network/Wi-Fi/Miracast buffering.
+         */
+        const audioBuffer = await ctx.decodeAudioData(
+            arrayBuffer.slice(0)
+        );
+
+        decodedCache.set(url, audioBuffer);
+
+        /*
+         * Prevent unlimited memory usage on a TV/browser.
+         */
+        if (decodedCache.size > MAX_CACHE_ITEMS) {
+            const firstKey = decodedCache.keys().next().value;
+
+            if (firstKey !== url) {
+                decodedCache.delete(firstKey);
+            }
+        }
+
+        return audioBuffer;
+    })();
+
+    loadingAudio.set(url, loadingPromise);
+
+    try {
+        return await loadingPromise;
+    } finally {
+        loadingAudio.delete(url);
+    }
+}
+
+/* ============================================================
+   ADD ANNOUNCEMENT TO QUEUE
+============================================================ */
+async function enqueueVoice(data) {
+
+    if (!data || !data.audio) {
+        console.warn("playVoice ไม่มี audio URL:", data);
+        return;
+    }
+
+    /*
+     * Start downloading immediately.
+     * This means while another announcement is playing,
+     * the next announcement can be prepared.
+     */
+    const promise = loadAndDecodeAudio(data.audio);
+
+    audioQueue.push({
+        data,
+        audioPromise: promise
+    });
+
+    processAudioQueue();
+}
+
+/* ============================================================
+   PROCESS AUDIO QUEUE
+============================================================ */
+async function processAudioQueue() {
+
+    if (!audioReady) return;
+    if (isPlaying) return;
+    if (!audioQueue.length) return;
+
+    isPlaying = true;
+
+    const item = audioQueue.shift();
+
+    try {
+        const audioBuffer = await item.audioPromise;
+
+        const ctx = createAudioContext();
+
+        if (ctx.state === "suspended") {
+            await ctx.resume();
+        }
+
+        displayPatient(item.data);
+
+        /*
+         * Use AudioBufferSourceNode.
+         * The complete audio is already decoded.
+         * There is no MP3 buffering during playback.
+         */
+        const source = ctx.createBufferSource();
+
+        source.buffer = audioBuffer;
+        source.connect(ctx.destination);
+
+        setAudioStatus(
+            "กำลังประกาศ " +
+            (item.data.queueNo || ""),
+            "ready"
+        );
+
+        await new Promise((resolve) => {
+
+            let finished = false;
+
+            const finish = () => {
+                if (finished) return;
+
+                finished = true;
+
+                try {
+                    source.disconnect();
+                } catch {}
+
+                resolve();
+            };
+
+            source.onended = finish;
+
+            /*
+             * Small scheduled start gives the browser/audio
+             * output path a stable point to start from.
+             */
+            const startAt = ctx.currentTime + 0.08;
+
+            source.start(startAt);
+        });
+
+    } catch (error) {
+
+        console.error(
+            "❌ Audio playback error:",
+            error
+        );
+
+        setAudioStatus(
+            "เล่นเสียงไม่สำเร็จ — จะข้ามไปคิวถัดไป",
+            "error"
+        );
+
+    } finally {
+
+        isPlaying = false;
+
+        if (!audioQueue.length) {
+            setAudioStatus(
+                "เสียงพร้อมใช้งาน — รอประกาศคิว",
+                "ready"
+            );
+        }
+
+        /*
+         * Continue with the next announcement.
+         */
+        setTimeout(
+            processAudioQueue,
+            20
+        );
+    }
+}
+
+/* ============================================================
+   SOCKET EVENTS
+============================================================ */
+socket.on("connect", () => {
+    console.log("🔌 Socket connected:", socket.id);
+
+    setAudioStatus(
+        audioReady
+            ? "เสียงพร้อมใช้งาน — เชื่อมต่อระบบแล้ว"
+            : "เชื่อมต่อระบบแล้ว — กรุณาเปิดเสียง",
+        audioReady ? "ready" : ""
+    );
+});
+
+
+
+
+
+socket.on("disconnect", (reason) => {
+    console.warn(
+        "🔌 Socket disconnected:",
+        reason
+    );
+
+    setAudioStatus(
+        "กำลังเชื่อมต่อระบบใหม่...",
+        ""
+    );
+});
+
+socket.on("connect_error", (error) => {
+    console.error(
+        "Socket connection error:",
+        error.message
+    );
+});
+
+/* ============================================================
+   PLAY VOICE
+============================================================ */
+socket.on("playVoice", (data) => {
+
+    console.log(
+        "🔊 Queue announcement:",
+        data.queueNo,
+        data.audio
+    );
+
+    /*
+     * Display the queue immediately.
+     * Audio is prepared independently.
+     */
+    displayPatient(data);
+
+    /*
+     * If user has not unlocked audio yet, keep the event
+     * in the queue. Once unlockAudio() is clicked,
+     * it will be processed.
+     */
+    enqueueVoice(data);
+});
+
+/* ============================================================
+   VOICE ERROR
+============================================================ */
+socket.on("voiceError", (data) => {
+
+    console.error(
+        "Server voice error:",
+        data
+    );
+
+    setAudioStatus(
+        `สร้างเสียงประกาศ ${data.queueNo || ""} ไม่สำเร็จ`,
+        "error"
+    );
+});
+</script>
+
+</body>
+</html>

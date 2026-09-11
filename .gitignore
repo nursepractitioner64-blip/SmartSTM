@@ -1,0 +1,8 @@
+@"
+node_modules/
+.env
+*.log
+audio/*.mp3
+data/queue.json
+other/
+"@ | Out-File -Encoding utf8 .gitignore

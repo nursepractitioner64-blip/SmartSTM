@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<title>HIS Queue Analytics</title>
+
+<link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script src="/socket.io/socket.io.js"></script>
+
+<style>
+body {
+  font-family: 'Prompt', sans-serif;
+  background: #f4f7fb;
+  margin: 0;
+  padding: 20px;
+  color: #1b1f2a;
+}
+
+/* TOP NAV */
+.nav {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 15px;
+}
+
+.nav a {
+  padding: 8px 12px;
+  border-radius: 8px;
+  text-decoration: none;
+  font-size: 14px;
+  transition: 0.2s;
+}
+
+.nav a.active {
+  background: #1e88e5;
+  color: white;
+}
+
+.nav a:not(.active) {
+  background: #e9eef5;
+  color: #1b1f2a;
+}
+
+/* HEADER */
+h2 {
+  margin-bottom: 15px;
+}
+
+/* KPI GRID */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 15px;
+}
+
+.kpi-card {
+  background: #fff;
+  padding: 18px;
+  border-radius: 14px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+  transition: 0.2s;
+}
+
+.kpi-card:hover {
+  transform: translateY(-2px);
+}
+
+.kpi-title {
+  font-size: 13px;
+  color: #6b7a90;
+}
+
+.kpi-value {
+  font-size: 16px;
+  font-weight: 700;
+  margin-top: 6px;
+}
+
+/* COLORS */
+.blue { border-left: 5px solid #1e88e5; }
+.yellow { border-left: 5px solid #f9a825; }
+.purple { border-left: 5px solid #7e57c2; }
+.green { border-left: 5px solid #2e7d32; }
+.red { border-left: 5px solid #c62828; }
+
+/* SECTION */
+.section {
+  margin-top: 18px;
+  background: #fff;
+  padding: 16px;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+}
+
+.section h3 {
+  margin-top: 0;
+  font-size: 14px;
+  color: #333;
+}
+
+.flow-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+.flow-box {
+  background: #f8fafc;
+  padding: 12px;
+  border-radius: 10px;
+  text-align: center;
+}
+
+.flow-value {
+  font-size: 14px;
+  font-weight: 700;
+}
+</style>
+</head>
+
+<body>
+
+<h2>📊 HIS Queue Analytics Dashboard</h2>
+
+<!-- NAVIGATION -->
+<div class="nav">
+  <a class="active" href="/analytics.html">📊 Analytics</a>
+  <a href="/nurse.html">🩺 Nurse</a>
+  <a href="/doctor.html">👨‍⚕️ Doctor</a>
+  <a href="/treatment.html">🧪 Treatment</a>
+  <a href="/pharmacy.html">💊 Pharmacy</a>
+</div>
+
+<!-- KPI -->
+<div class="kpi-grid">
+
+  <div class="kpi-card blue">
+    <div class="kpi-title">ผู้รับบริการทั้งหมด</div>
+    <div class="kpi-value" id="total">0</div>
+  </div>
+
+  <div class="kpi-card yellow">
+    <div class="kpi-title">รอรับบริการ</div>
+    <div class="kpi-value" id="waiting">0</div>
+  </div>
+
+  <div class="kpi-card purple">
+    <div class="kpi-title">กำลังให้บริการ</div>
+    <div class="kpi-value" id="service">0</div>
+  </div>
+
+  <div class="kpi-card green">
+    <div class="kpi-title">เสร็จสิ้น</div>
+    <div class="kpi-value" id="done">0</div>
+  </div>
+
+  <div class="kpi-card red">
+    <div class="kpi-title">เวลารอเฉลี่ย</div>
+    <div class="kpi-value" id="avg">0</div>
+  </div>
+
+</div>
+
+<!-- FLOW TIME -->
+<div class="section">
+  <h3>⏱ Clinical Flow Time (นาทีเฉลี่ย)</h3>
+
+  <div class="flow-grid">
+
+    <div class="flow-box">
+      <div>ลงทะเบียน → แพทย์เรียก</div>
+      <div class="flow-value" id="t1">0</div>
+    </div>
+
+    <div class="flow-box">
+      <div>แพทย์เรียก → หัตถการ/ยา</div>
+      <div class="flow-value" id="t2">0</div>
+    </div>
+
+    <div class="flow-box">
+      <div>หัตถการ → ห้องยา</div>
+      <div class="flow-value" id="t3">0</div>
+    </div>
+
+    <div class="flow-box">
+      <div>จ่ายยา → เสร็จสิ้น</div>
+      <div class="flow-value" id="t4">0</div>
+    </div>
+
+  </div>
+</div>
+
+<!-- INSIGHT -->
+<div class="section">
+  <h3>📈 Insight</h3>
+  <div>เวลารอนานสุด: <b id="max">0</b> นาที</div>
+  <div>ช่วงคนมาเยอะสุด: <b id="peak">-</b> นาฬิกา</div>
+</div>
+
+<script>
+
+const socket = io();
+
+/* ================= UTIL ================= */
+
+function diffMin(a, b){
+    if(!a || !b) return 0;
+    return Math.floor((b - a) / 60000);
+}
+
+function avg(arr){
+    return arr.length
+        ? Math.floor(arr.reduce((a,b)=>a+b,0)/arr.length)
+        : 0;
+}
+
+/* ================= MAIN ================= */
+
+function render(data){
+
+    let total = data.length;
+
+    let waiting = data.filter(p => p.status === "waiting").length;
+
+    let service = data.filter(p =>
+        ["called","treatment","procedure","pharmacy"].includes(p.status)
+    ).length;
+
+    let done = data.filter(p => p.status === "done").length;
+
+    /* WAIT TIME */
+    let waits = data.map(p => {
+        let now = Date.now();
+        return Math.floor((now - (p.createdAt || now))/60000);
+    });
+
+    let max = waits.length ? Math.max(...waits) : 0;
+
+    /* FLOW TIME */
+    let t1 = [];
+    let t2 = [];
+    let t3 = [];
+    let t4 = [];
+
+    data.forEach(p => {
+
+        if(p.calledAt)
+            t1.push(diffMin(p.createdAt, p.calledAt));
+
+        if(p.treatmentAt)
+            t2.push(diffMin(p.calledAt, p.treatmentAt));
+
+        if(p.pharmacyAt)
+            t3.push(diffMin(p.treatmentAt, p.pharmacyAt));
+
+        if(p.doneAt)
+            t4.push(diffMin(p.pharmacyAt, p.doneAt));
+    });
+
+    /* PEAK HOUR */
+    let hours = {};
+
+    data.forEach(p => {
+        let h = new Date(p.createdAt || Date.now()).getHours();
+        hours[h] = (hours[h] || 0) + 1;
+    });
+
+    let peak = Object.keys(hours).reduce((a,b)=>
+        hours[a] > hours[b] ? a : b
+    , "-");
+
+    /* UPDATE UI */
+    document.getElementById("total").innerText = total;
+    document.getElementById("waiting").innerText = waiting;
+    document.getElementById("service").innerText = service;
+    document.getElementById("done").innerText = done;
+
+    document.getElementById("avg").innerText =
+        waits.length ? Math.floor(waits.reduce((a,b)=>a+b,0)/waits.length) : 0;
+
+    document.getElementById("max").innerText = max;
+    document.getElementById("peak").innerText = peak;
+}
+
+/* ================= SOCKET ================= */
+
+socket.on("updateQueue", data => {
+    render(data);
+});
+
+</script>
+
+</body>
+</html>

@@ -1,0 +1,37 @@
+@import url('https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap');
+
+:root {
+  --font: "Prompt", sans-serif;
+  --primary: #ff8f00;
+  --primary-dark: #ff8f00;
+
+  --success: #2e7d32;
+  --warning: #f9a825;
+  --danger:  #c62828;
+  --info:    #0277bd;
+
+  --bg: #f4f7fb;
+  --card: #ffffff;
+  --border: #e3e8ef;
+
+  --text: #1b1f2a;
+  --text-soft: #6b7a90;
+  --muted: #8a94a6;
+
+  --radius: 12px;
+  --shadow: 0 4px 16px rgba(0,0,0,0.08);
+  --shadow-soft: 0 2px 8px rgba(0,0,0,0.06);
+}
+
+/* GLOBAL RESET */
+* {
+  box-sizing: border-box;
+  font-family: var(--font);
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
