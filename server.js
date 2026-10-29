@@ -51,7 +51,7 @@ if (!fs.existsSync(AUDIO_DIR)) {
    ROOM CONFIG
 ========================= */
 const roomNames = {
-  "1": "ห้องตรวจโรคหมายเลข 1",
+  "1": "ห้องตรวจโรค",
   "2": "รับยา",
   "3": "ห้องหัตถการ"
 };
@@ -193,7 +193,7 @@ async function callPatient(patient) {
     roomDirections[room] || "";
 
   const text =
-  `ขอเชิญคุณ ${patient.name} ` +
+  `เรียนเชิญคุณ ${patient.name} ` +
   `${roomName} ` +
   `${direction}`;
 
